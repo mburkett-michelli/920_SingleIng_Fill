@@ -1,0 +1,18 @@
+Software can bet setup to use a wide range of setpoints.
+There are variables to set the main fill setpoint and the last setpoint in the system.
+It is setup to use both the E-Stop and the Batch Start switch on
+Rice Lake enclosures.  However you need to swap Digin 1 and 2 for this to work.
+The software has a manual override feature.
+
+The Calibration_Save is a pull from the scale with cal data.
+The Testing_Head file has the data for setpoints, etc stored within it.
+
+In the program g_Level's are used to determine current program state.
+
+g_Level=0  Program is at starting point
+g_Level=2  User has stopped the batching and has the option for resume or abort
+g_Level=3  User has stopped the batching and only has the option for resume
+g_Level=5  An error occurred with the setpoints
+g_Level=8  Batching is in progress
+g_Level=9  Batching has finished
+

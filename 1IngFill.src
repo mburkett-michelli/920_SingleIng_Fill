@@ -1,0 +1,1220 @@
+------------------------------------------------------------------------------
+-- Program Name: Blending-Hopper
+--
+-- Copyright 2012 Total Scale Service inc. as an unpublished work. 
+-- All Rights Reserved.
+--
+-- The information contained herein is confidential property of 
+--  Total Scale Service inc.  The use, copying, transfer or disclosure of such
+-- information is prohibited except by express written agreement with
+--  Total Scale Service inc.
+--
+-- First written on 1/31/2011 by Matt Burkett.
+--
+-- Module Description:
+-- This file is the iRite source code for a 920i program.
+--
+-- This program will be Used to run the Blending Hopper at Amvac in Marsing,
+-- Idaho
+------------------------------------------------------------------------------
+
+program Blending_Hopper;
+
+#include import.iri  
+
+  ----------------------------------------------------------------------------
+  -- Begin constants and aliases definitions here.
+  
+  g_csProgName : constant string := "Fill Program";  
+  g_csVersion : constant string := "01.00";
+ 
+  -- End of constants and aliases.
+  ----------------------------------------------------------------------------
+  
+
+  ----------------------------------------------------------------------------
+  -- Begin user created types (enumerations, records, arrays) definitions.
+ -- type StringArray is array[50] of string;
+ -- type RealArray is array[20] of real;
+  
+
+  -- End of user created types (enumerations, records, arrays).
+  ----------------------------------------------------------------------------
+
+
+
+  ----------------------------------------------------------------------------
+  -- Start global variables definitions here.  Don't forget to initialize 
+  -- them in the system startup event handler.
+  
+  g_iBuild       : integer;
+  g_srcResult    : SysCode;   
+  g_Count : integer;
+  
+  g_Level : integer :=0;
+  g_CountMax : integer :=25; 
+  g_SubLevel : integer :=0;
+  g_BitStatus : integer;
+  g_CurrentRation :  string := "";  
+  g_CurIngredient : string;
+  g_RecordCount : integer;    
+  g_CurrentSp : integer;
+  g_FillSP: integer; -- Identifies the Setpoint used for flow control
+  g_Manual : integer; -- Toggle for manual dump on / off
+  g_Target : real; 
+  g_Cutoff : real;
+  g_CurSpValue : real;
+  g_HighestSP : integer;
+  
+  
+  
+
+  -- End of global variables.    
+  ----------------------------------------------------------------------------
+
+
+  ----------------------------------------------------------------------------
+  -- Start functions and procedures definitions here.    
+
+procedure TareScale;
+--Declaration Section
+lCount : integer;
+lindex : integer;             
+Net : real ;
+
+
+begin 
+   
+     lCount:=0;
+      WriteLn(2,"Taring Scale");
+
+     loop
+       
+       lCount:=lCount+1;   
+       if AcquireTare(Scale1)=SysOk then
+       
+         GetNet(scale1,Primary,Net);
+          WriteLn(2,"Count: "+IntegerToString(lCount,0)+"  Net: "+IntegerToString(Net,0));
+         if Net<5 then
+       
+            WriteLn(2,"Net within 5 of zero  Net = "+IntegerToString(Net,0));
+           
+           exit;
+       
+         end if;
+       
+          WriteLn(2,"Aquire Tare Good - Net not within 5 of Zero  Net = "+IntegerToString(Net,0));
+       
+       else                                                             
+       
+          WriteLn(2,"Aquire Tare Fail - Current Net = "+IntegerToString(Net,0));
+         
+       end if;
+       SetLabelText(Lbl5S1,"Taring Scale..."+IntegerToString(lCount,0));          
+       if lCount>20 then
+       
+         g_SubLevel:=2;
+         SetLabelText(Lbl4S1,"Error Taring Scale");
+         SetLabelText(Lbl5S1,"Check the Tare");
+         SetSoftkeyText(1,"Resume");
+         SetSoftkeyText(2,"");
+         SetSoftkeyText(3,"Cancel");
+         SetSoftkeyText(4,"");
+         SetSoftkeyText(5,"");
+         exit;
+       
+       end if;
+       -- Pause to give scale a chance to settle down
+       for lindex := 1 to 5000
+       loop
+       
+         if lindex=2500 then  -- Check scale at half way mark.
+           if AcquireTare(Scale1)=SysOk then
+             exit;
+           end if;
+         end if;
+        
+       end loop;  
+       
+     end loop;            
+   
+    return;
+
+end;
+
+procedure Debug (Stemp : string);
+-- Declaration Section   
+
+
+begin
+               
+
+    if g_Manual = 1 then
+      
+      WriteLn(2,Stemp);
+      
+    end if; 
+          
+  return;
+  
+end;
+
+
+procedure EnableHandelers;
+--Declaration Section
+
+begin        
+    EnableHandler(Numerickeypressed);
+    EnableHandler(Navupkeypressed);
+    EnableHandler(Navdownkeypressed);
+    
+
+
+
+    return;
+
+end;
+
+
+procedure DisableHandlers;
+--Declaration Section
+
+begin        
+    DisableHandler(Numerickeypressed);
+    DisableHandler(Navupkeypressed);
+    DisableHandler(Navdownkeypressed);
+    
+    return;
+
+end;
+
+  
+  function MakeVersionString : string; 
+    
+    sTemp : string;
+    
+  begin 
+    
+    if g_iBuild > 9 then
+      sTemp := ("Ver " + g_csVersion + "." + IntegerToString(g_iBuild, 2));
+    else
+      sTemp := ("Ver " + g_csVersion + ".0" + IntegerToString(g_iBuild, 1));
+    end if;
+      
+    return sTemp;
+    
+  end;
+
+    
+     
+  procedure DisplayVersion; 
+  
+  begin
+   
+    DisplayStatus(g_csProgName + "  " + MakeVersionString);
+  
+  end;
+
+
+  
+procedure UpdateDisplay;
+--Declaration Section
+
+CutOff : real;
+CurSpValue : real;
+Bit : integer;
+Net : real;   
+Gross : real;
+CurrentSp : integer;
+
+begin
+    
+    if g_Level=0 then 
+
+      SelectScreen(1);
+      SetNumericValue(Num1S1,g_CutOff);
+      SetNumericValue(Num2S1,g_Target);
+      SetLabelText(Lbl4S1,"Idle");
+      SetLabelText(lbl5S1,"");
+      SetSoftkeyText(1,"Start Batch");
+      SetSoftkeyText(2,""); 
+      if g_Manual = 0 then
+        
+         SetSoftkeyText(3,"Bypass Off");
+        
+      else
+      
+         SetSoftkeyText(3,"Bypass On");
+        
+      end if;
+      SetSoftkeyText(4,"Edit Cutoff");
+      SetSoftkeyText(5,"Edit Target");
+      
+    
+
+----Batching
+      
+    elsif g_Level=8 then -- Batching has started
+      GetDigin(0,1,Bit);
+       if Bit=1 then --Estop has been pressed
+         SetLabelText(Lbl4S1,"Batch Stopped");
+         SetLabelText(Lbl5S1,"Batch Halted by E-Stop");
+         SetSoftkeyText(1,"Resume");
+         SetSoftkeyText(2,""); 
+         SetSoftkeyText(3,"Abort Batch");
+         SetSoftkeyText(4,"");
+         SetSoftkeyText(5,"");
+         g_Level:=2;
+                          
+       else
+       
+          
+          if GetCurrentSP(CurrentSp)<>SysOk then
+             CurrentSp := g_CurrentSp;      
+          end if;
+          
+--          WriteLn(2,"Setpoint = "+IntegerToString(CurrentSp,0));
+--          WriteLn(2,"Global Setpoint = "+IntegerToString(g_CurrentSp,0)); 
+          
+          if CurrentSp=1 and g_CurrentSp>1  then
+              ResetBatch;
+              SetLabelText(Lbl4S1,"Setpoint Error");
+              SetLabelText(Lbl5S1,"Batch Cannot Continue");
+              g_Level:=5; -- If setpoint error flag with lvl5
+              SetSoftkeyText(1,"Return");
+              SetSoftkeyText(2,"");
+              SetSoftkeyText(3,"");
+              SetSoftkeyText(4,"");
+              SetSoftkeyText(5,"");
+              SetTimerMode(1,TimerOneShot);
+              SetTimer(1,50);
+              StartTimer(1);    
+          else
+          
+              g_CurrentSp:=CurrentSp;
+          
+              SelectScreen(1);
+              SetNumericValue(Num1S1,CutOff);
+              SetNumericValue(Num2S1,g_Target);                 
+                                         
+              if CurrentSp=1 then
+                 
+                 SetLabelText(Lbl4S1,"Starting...");
+                 SetLabelText(Lbl5S1,"");
+                 SetSoftkeyText(1,"");
+                 SetSoftkeyText(2,"Stop Batch");
+                 SetSoftkeyText(3,"");
+                 SetSoftkeyText(4,"");
+                 SetSoftkeyText(5,"");
+                 
+              elsif CurrentSp=g_FillSP then                 
+                 
+                 SetLabelText(Lbl4S1,"Filling Hopper");
+                 SetLabelText(Lbl5S1,"");
+                 SetSoftkeyText(1,"");
+                 SetSoftkeyText(2,"Stop Batch");
+                 SetSoftkeyText(3,"");
+                 SetSoftkeyText(4,"");
+                 SetSoftkeyText(5,"");
+                   
+              elsif  CurrentSp=g_HighestSp then   
+                                
+                 SetLabelText(Lbl4S1,"Batch Completed");
+                 SetLabelText(Lbl5S1,"");
+                 SetSoftkeyText(1,"Finish");
+                 SetSoftkeyText(2,"");
+                 
+                 if g_Manual = 0 then
+                   
+                   SetSoftkeyText(3,"Bypass Off");
+                  
+                 else
+                
+                   SetSoftkeyText(3,"Bypass On");
+                  
+                 end if;
+                       
+                 SetSoftkeyText(4,"");
+                 SetSoftkeyText(5,"");
+                 
+                 g_Level:=9;
+                  
+              end if;
+          
+          end if;
+             
+       end if;   
+    
+    elsif g_Level=9 then
+    
+      GetDigin(0,1,Bit);
+      if Bit=1 then --Estop has been pressed
+        SetLabelText(Lbl4S1,"ByPass Stopped");
+        SetLabelText(Lbl5S1,"ByPass Halted by E-Stop");
+        SetSoftkeyText(1,"");
+        SetSoftkeyText(2,"");
+        g_Manual:=0; 
+      
+      else
+      
+        SetLabelText(Lbl4S1,"Batch Completed");
+        SetLabelText(Lbl5S1,"");
+        SetSoftkeyText(1,"Finish");
+        SetSoftkeyText(2,"");
+        
+      end if;         
+      if g_Manual = 0 then
+                   
+        SetSoftkeyText(3,"Bypass Off");
+                  
+      else
+                
+        SetSoftkeyText(3,"Bypass On");
+                  
+      end if;
+                       
+      SetSoftkeyText(4,"");
+      SetSoftkeyText(5,"");
+      
+    end if;
+      
+    return;
+
+end;
+
+  
+procedure PromptForBatch;
+--Declaration Section
+
+begin
+      
+      ClearTare(1);
+      SetMode(Scale1,GrossMode);
+      g_CurrentSp:=0;
+      g_SubLevel:=0;
+      g_Level:=0;
+      g_Manual:=0;
+      SetDigout(0,3,0);
+      ResetBatch;
+
+      UpdateDisplay;
+    return;
+
+end;
+
+
+--------------------------------------------------------------------------------
+
+--                   Setup Stuff
+
+--------------------------------------------------------------------------------
+
+procedure DisplayIngredInfo;
+--Declaration Section
+
+begin
+
+    return;
+
+end;
+
+
+
+procedure DisplayRationInfo;
+--Declaration Section
+
+begin
+
+    return;
+
+end;
+
+                 
+procedure DisplaySetupInfo;
+--Declaration Section
+
+begin
+
+    return;
+
+end;
+
+                          
+                 
+
+
+
+
+
+
+
+
+
+
+
+
+-------------------------------------------------------------------------------
+
+--                  End of Setup Stuff
+
+------------------------------------------------------------------------------- 
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 
+-------------------------------------------------------------------------------
+
+--                       Batching Stuff
+
+------------------------------------------------------------------------------- 
+
+procedure SetBatch;
+--Declaration Section
+Setpt : integer;
+SpValue : real;
+CutOff : real;
+Bit : integer;        
+CurPreact : real;                                  
+Factor : real;
+
+Gross : real;
+begin
+
+    GetSPValue(g_FillSP,CutOff); 
+    GetGross(Scale1,Primary,Gross);
+    GetDigin(0,1,Bit);
+    if Bit=1 then    
+    
+       SelectScreen(1);
+       SetNumericValue(Num1S1,CutOff);
+       SetNumericValue(Num2S1,g_Target);
+       SetLabelText(Lbl4S1,"Emergency Stop Pressed");
+       SetLabelText(Lbl5S1,"Batch Aborted");
+       SetSoftkeyText(1,"Return");
+       SetSoftkeyText(2,"");
+       SetSoftkeyText(3,"");
+       SetSoftkeyText(4,"");
+       SetSoftkeyText(5,"");
+       g_Level:=3;
+    
+    elsif Gross<50 and Gross >-50 then
+    
+       --  Batch Start Selected, Display message to inform them that process has started
+       GetGross(Scale1,Primary,Gross);
+
+       if Gross <=0 then
+    
+         ZeroScale(scale1);
+    
+       else
+    
+         TareScale; 
+    
+       end if;  
+       
+       if StartBatch<>SysOk then
+       
+         SelectScreen(1);
+         SetNumericValue(Num1S1,CutOff);
+         SetNumericValue(Num2S1,g_Target);
+         SetLabelText(Lbl4S1,"StartBatch Failed");
+         SetLabelText(Lbl5S1,"");
+         SetSoftkeyText(1,"Return");
+         SetSoftkeyText(2,""); 
+         SetSoftkeyText(3,"");
+         SetSoftkeyText(4,"");
+         SetSoftkeyText(5,"");
+         g_Level:=3;
+         
+       else
+         
+         SelectScreen(1);
+         SetNumericValue(Num1S1,CutOff);
+         SetNumericValue(Num2S1,g_Target);
+         SetLabelText(Lbl4S1,"Batch Starting");
+         SetLabelText(Lbl5S1,"");
+         SetSoftkeyText(1,"");
+         SetSoftkeyText(2,"Stop Batch"); 
+         SetSoftkeyText(3,"");
+         SetSoftkeyText(4,"");
+         SetSoftkeyText(5,"");
+         g_Level:=8;
+         SetMode(Scale1, NetMode);
+         StartBatch;
+         
+       end if;           
+       
+    else
+       
+       SelectScreen(1);
+       SetNumericValue(Num1S1,CutOff);
+       SetNumericValue(Num2S1,g_Target);
+       SetLabelText(Lbl4S1,"Scale Not At Zero");
+       SetLabelText(Lbl5S1,"Scale must be within 50lbs of Zero");
+       SetSoftkeyText(1,"Return");
+       SetSoftkeyText(2,""); 
+       SetSoftkeyText(3,"");
+       SetSoftkeyText(4,"");
+       SetSoftkeyText(5,"");
+       g_Level:=3;
+       
+    end if;
+    
+    UpdateDisplay;        
+    
+    return;
+
+end;
+
+
+
+
+-------------------------------------------------------------------------------
+
+--                   End Of Batching Stuff
+
+------------------------------------------------------------------------------- 
+
+
+
+
+
+
+
+
+  -- End of functions and procedures.
+  ----------------------------------------------------------------------------
+
+
+
+
+
+
+  ----------------------------------------------------------------------------
+  -- Begin event handler definitions here.                                    
+  
+handler Cmd1Handler;
+--Declaration Section
+
+begin
+  
+   return;
+
+end;         
+
+handler Cmd2Handler;
+--Declaration Section
+
+begin                   
+   
+    return;
+
+end;
+
+
+handler Navupkeypressed;
+--Declaration Section
+
+begin
+
+    UpdateDisplay;
+    return;
+
+end;      
+
+
+handler Navdownkeypressed;
+--Declaration Section
+
+begin
+
+    UpdateDisplay;
+
+    return;
+
+end;
+
+
+
+  
+handler User1Keypressed;
+--Declaration Section
+Bit : integer;
+
+begin    
+
+    GetDigin(0,1,Bit);
+    if Bit=1 then --Estop has been pressed
+      SetLabelText(Lbl4S1,"Batch Stopped");
+      SetLabelText(Lbl5S1,"Batch Halted by E-Stop");
+      SetSoftkeyText(1,"Resume");
+      SetSoftkeyText(2,""); 
+      SetSoftkeyText(4,"");
+      SetSoftkeyText(5,"");
+    
+      if g_Level=0 then
+        
+        SetSoftkeyText(3,"");
+        g_Level:=3;
+          
+      elsif g_Level=8 then
+        
+        SetSoftkeyText(3,"Abort Batch");
+        g_Level:=2;
+          
+      end if;
+        
+    else 
+    
+      if g_Level=0 then
+        
+        if g_Manual=1 then
+                
+          g_Manual:=0;
+          SetDigout(0,3,0);
+          
+        end if;  
+          
+        g_Level:=8;
+        SetBatch;
+                      
+      elsif g_Level=2 then    -- Resume Processing.
+        
+        g_Level:=8;
+        StartBatch;                              
+      
+      elsif g_Level=3 then   -- Return to Beginning.
+    
+        g_Level:=0;
+        
+      elsif g_Level=5 then  -- Setpoint mismatch brought us here.  Reset and return.
+      
+        ResetBatch;
+        g_CurrentSp:=0;
+        g_Level:=0;
+        ClearTare(1);
+        SetMode(Scale1,GrossMode);
+      
+      elsif g_Level=9 then  --  Finished with batching
+      
+        PromptForBatch;
+        
+      end if;
+    
+    end if;
+       
+    UpdateDisplay;
+    
+    return;
+
+end;
+
+  
+handler User2Keypressed;
+--Declaration Section
+CutOff : real;
+
+begin
+
+     GetSPValue(g_FillSP,CutOff);                           
+     if g_Level=8 then
+       StopBatch;
+       SelectScreen(1);
+       SetNumericValue(Num1S1,CutOff);
+       SetNumericValue(Num2S1,g_Target);
+       SetLabelText(Lbl4S1,"Batch Stopped");
+       SetLabelText(Lbl5S1,"Batch Halted by User");
+       SetSoftkeyText(1,"Resume");
+       SetSoftkeyText(2,""); 
+       SetSoftkeyText(3,"Abort Batch");
+       SetSoftkeyText(4,"");
+       SetSoftkeyText(5,"");
+       g_Level:=2;             
+     end if;     
+     
+    return;
+
+end;
+
+handler User3Keypressed;
+--Declaration Section
+Bit : integer;
+
+begin
+    
+     GetDigin(0,1,Bit);
+     if Bit=1 then --Estop has been pressed
+       SetLabelText(Lbl4S1,"Batch Stopped");
+       SetLabelText(Lbl5S1,"Batch Halted by E-Stop");
+       SetSoftkeyText(1,"Resume");
+       SetSoftkeyText(2,""); 
+       SetSoftkeyText(4,"");
+       SetSoftkeyText(5,"");
+       if g_Level=0 then
+         
+         g_Level:=3;
+         
+       end if;
+       
+    else
+       
+      if g_Level=0 or g_Level=9 then
+         
+        if g_Manual=0 then
+        
+          g_Manual:=1;
+          
+        else
+        
+          g_Manual:=0;
+          
+        end if;
+        
+        SetDigout(0,3,g_Manual);
+        
+      elsif g_Level=2 then
+        
+        g_CurrentSp:=0;
+        g_SubLevel:=0;
+        g_Level:=0;
+        
+        ClearTare(1);
+        SetMode(Scale1,GrossMode);
+        ResetBatch;
+        
+      end if;
+      
+    end if;
+      
+    UpdateDisplay;  
+
+    return;
+
+end;
+
+handler User4Keypressed;
+--Declaration Section
+
+begin
+
+    if g_Level=0 then
+      
+      g_SubLevel:=1;     -- Set Variable to identify entry as Cutoff
+      PromptUser("New CutOff:");
+       
+    end if; 
+    return;
+
+end;
+
+
+
+handler User5Keypressed;
+--Declaration Section
+
+begin
+    
+    if g_Level=0 then
+      
+      g_SubLevel:=2;    -- Set Variable to identify entry as Target
+      PromptUser("New Target:");
+       
+    end if; 
+    return;
+
+end;
+
+
+
+
+
+
+ handler Numerickeypressed;
+----Declaration Section
+
+begin
+
+    return;
+
+end;
+
+
+
+ handler Userentry;
+--Declaration Section
+UserString :string;
+UserReal : real;
+EntryString : string;
+rPreact : real;
+SetupDB : SetupDBDatabase;
+
+begin
+                          
+    UserString := GetEntry;
+    ClosePrompt;          
+    EnableHandelers;
+    UserReal:=StringToReal(UserString);
+
+    if EventKey = EnterKey   then          
+
+      if g_Level=0 then    -- No batching is in progress
+      
+        if UserString<>""then    -- Make sure the user entered something.
+          
+          if g_SubLevel=1 then   -- User is entering new Cutoff value.
+            
+            if UserReal > g_Target then   -- Make sure that the Cutoff is not greater than your target.
+              
+              SelectScreen(1);
+              SetNumericValue(Num1S1,g_CutOff);
+              SetNumericValue(Num2S1,g_Target);
+              SetLabelText(Lbl4S1,"Input Error");
+              SetLabelText(Lbl5S1,"Cut Off Too Large");
+              SetSoftkeyText(1,"Resume");
+              SetSoftkeyText(2,""); 
+              SetSoftkeyText(3,"");
+              SetSoftkeyText(4,"");
+              SetSoftkeyText(5,"");
+              g_Level:=3;           
+            
+            else
+              
+              g_Cutoff:=UserReal; -- Update the Cutoff global variable.
+              rPreAct:=g_Target-g_Cutoff; 
+              
+              SetupDB.GetFirst;
+              SetupDB.PreAct:=rPreAct;
+              SetupDB.Update;
+              
+              SetSPPreact(g_FillSP,rPreact);  -- Update the preact value on the setpoint
+            
+            end if; 
+          
+          end if;
+          
+          if g_SubLevel=2 then    -- User is entering new Target value.
+            
+            if UserReal < g_CutOff then  -- If the Target is Less than the CutOff point
+            
+              SelectScreen(1);
+              SetNumericValue(Num1S1,g_CutOff);
+              SetNumericValue(Num2S1,g_Target);
+              SetLabelText(Lbl4S1,"Input Error");
+              SetLabelText(Lbl5S1,"Target Too Small");
+              SetSoftkeyText(1,"Resume");
+              SetSoftkeyText(2,""); 
+              SetSoftkeyText(3,"");
+              SetSoftkeyText(4,"");
+              SetSoftkeyText(5,"");
+              g_Level:=3;           
+            
+            else
+              
+              g_Target:=UserReal;  -- Update the Target variable. 
+              SetSPValue(g_Fillsp,g_Target);
+              SetupDB.GetFirst;
+              SetupDB.Target:=g_Target;
+              SetupDB.Update;
+              
+            end if;             
+          end if;
+        end if;
+      end if;
+    end if;  
+                               
+    UpdateDisplay;
+    return;
+end;
+
+    
+
+
+
+handler Digins0B1DeActivate; --EStop Activated
+--Declaration Section
+BS : BatchStatus;                
+
+begin
+
+    GetBatchStatus(BS);
+    
+    if BS= BatchRunning then
+    
+      PauseBatch;
+    
+    end if;
+    
+    if g_Manual=1 then   -- If E-stop is activated while manual control is on.
+     
+      SetDigout(0,3,0); -- Turn off digital out 3
+      
+    end if;
+    
+    UpdateDisplay; 
+    return;
+
+end;
+
+
+handler Digins0B1Activate; --EStop DeActivated
+--Declaration Section
+
+
+begin
+    UpdateDisplay; 
+    return;
+
+end;
+
+
+
+
+
+
+  
+handler Digins0B2Activate; --Select Switch Bit 1 Activated
+--Declaration Section
+Bit : integer;
+
+begin    
+
+    GetDigin(0,1,Bit);
+    if Bit=1 then --Estop has been pressed
+      SetLabelText(Lbl4S1,"Batch Stopped");
+      SetLabelText(Lbl5S1,"Batch Halted by E-Stop");
+      SetSoftkeyText(1,"Resume");
+      SetSoftkeyText(2,""); 
+      SetSoftkeyText(4,"");
+      SetSoftkeyText(5,"");
+    
+      if g_Level=0 then
+        
+        SetSoftkeyText(3,"");
+        g_Level:=3;
+          
+      elsif g_Level=8 then
+        
+        SetSoftkeyText(3,"Abort Batch");
+        g_Level:=2;
+          
+      end if;
+        
+    else 
+    
+      if g_Level=0 then          
+               
+        if g_Manual=1 then
+        
+          g_Manual:=0;
+          SetDigout(0,3,0);
+          
+        end if;
+               
+        g_Level:=8;
+        SetBatch;
+                      
+      elsif g_Level=2 then    -- Resume Processing.
+        
+        g_Level:=8;
+        StartBatch;                              
+      
+      elsif g_Level=3 then   -- Return to Beginning.
+    
+        g_Level:=0;
+        
+      elsif g_Level=5 then  -- Setpoint mismatch brought us here.  Reset and return.
+      
+        ResetBatch;
+        g_CurrentSp:=0;
+        g_Level:=0;
+        ClearTare(1);
+        SetMode(Scale1,GrossMode);
+      
+      elsif g_Level=9 then   --  Finished with Batching
+             
+        PromptForBatch;
+              
+      end if;
+    
+    end if;
+       
+    UpdateDisplay;
+    
+    return;
+
+end;
+
+
+handler Sp1Trip;
+--Declaration Section
+
+begin
+
+    UpdateDisplay;
+    return;
+
+end;
+       
+       
+handler Sp2Trip;
+--Declaration Section
+
+begin
+    UpdateDisplay;
+    return;
+
+end;       
+
+
+handler Sp3Trip;
+--Declaration Section
+
+begin
+    UpdateDisplay;
+    return;
+
+end;       
+
+handler Sp4Trip;
+--Declaration Section
+
+begin
+    UpdateDisplay;
+    return;
+
+end;
+
+       
+
+handler Timer1Trip;--Update Display
+--Declaration Section
+CurrentSp : integer;
+begin  
+
+    if (g_Level=8 and g_SubLevel=0) or g_Level=9 then
+--      GetCurrentSP(CurrentSp);
+--       if g_CurrentSP <>CurrentSp then
+         UpdateDisplay;   
+--       else
+--          StartTimer(1);   
+--       end if;    
+    end if;
+    return;
+
+end;
+
+
+handler Timer2Trip;--Update BarGraph
+--Declaration Section
+
+Scale : real;       
+CurrentSp : integer;              
+BLevel : integer;
+CurrentMode : Mode;
+
+begin   
+--    GetCurrentSP(CurrentSp);
+--    if CurrentSp=7 or CurrentSp=12 or CurrentSp=17  
+--       or CurrentSp=22 or CurrentSp=27 or CurrentSp=32 
+--       or CurrentSp=37 then
+--        WriteLn(2,"We Paused The Scale at Setpoint "+IntegerToString( CurrentSp,0));
+--       StartBatch;
+--    end if;
+--
+  GetMode(scale1,CurrentMode);
+  
+  if CurrentMode=NetMode then  
+    
+    GetNet(Scale1,Primary,Scale);
+    
+  elsif CurrentMode=GrossMode then
+  
+    GetGross(Scale1,Primary,Scale);
+    
+  end if;
+   
+  if g_Target>0 then
+    BLevel:=(Scale/g_Target)*100;
+  else                            
+    BLevel:=0;
+  end if;
+    
+  if BLevel>100 then 
+     BLevel:=100;
+  end if;
+
+  SetBargraphLevel(Bar1S1,BLevel);
+  UpdateDisplay;
+
+  return;
+
+end;
+
+
+
+  -- End of event handlers.
+  ----------------------------------------------------------------------------
+
+   
+
+
+------------------------------------------------------------------------------
+-- This chunk of code is the system startup event handler.
+SetupDB : SetupDBDatabase;
+
+begin
+
+  SetTimer(2,50);
+  SetTimerMode(2,TimerContinuous );
+  StartTimer(2);
+   
+  -- Initialize all global variables here.
+  
+  g_FillSP:=2;  -- Identifies the setpoint for flow control.
+  g_HighestSP:=3;  -- Identifies the highest setpoint for program control.
+  
+  if SetupDB.GetFirst<>SysOk then --Cant Find the Setup Record so Make some Default Values
+  
+    SetupDB.Target:=3684;
+    SetupDB.PreAct:=0;
+    SetupDB.Add;
+    
+  end if;
+  
+  g_Target:=SetupDB.Target;
+  g_Cutoff:=SetupDB.Target-SetupDB.PreAct;
+  
+  if g_Target < 0 then
+  
+    g_Target:=0;
+    
+  end if;
+  
+  if g_Cutoff < 0 or g_Cutoff > g_Target then
+  
+    g_Cutoff:=g_Target;
+    
+  end if;
+  
+  -- Increment the build number every time you make a change and recompile.
+  g_iBuild := 12; 
+
+  UpdateDisplay;     
+  -- Display the version number to the display.
+  DisplayVersion;
+   
+
+end Blending_Hopper; 
+-- This name must match the name following "program" keyword at 
+-- the beginning of the program.
+
